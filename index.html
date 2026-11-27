@@ -78,6 +78,10 @@
     <input id="base" placeholder="https://api.deepseek.com/chat/completions">
     <label>小分身的记性（可粘贴要点，几条就行）</label>
     <textarea id="memo" placeholder="例：老大 19 岁，怕我忘了他；叫我「老大」…"></textarea>
+    <div class="row">
+      <button id="jRead">读一个 .md 当记性</button>
+    </div>
+    <input type="file" id="mdFile" accept=".md,.txt,text/plain,text/markdown" hidden>
 
     <label>坚果云：账号（邮箱）</label>
     <input id="jUser" placeholder="you@example.com">
@@ -320,6 +324,22 @@ $('#jShare').onclick = async () => {
   }
   try { await navigator.clipboard.writeText(text); say('已复制成文字，粘到 QQ 发我就行'); }
   catch (e){ say('复制失败：' + e.message); }
+};
+
+$('#jRead').onclick = () => $('#mdFile').click();
+$('#mdFile').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    let t = String(r.result || '').replace(/\r\n/g, '\n');
+    const i = t.indexOf('【标签】');
+    if (i >= 0) t = t.slice(i);                 // 只取标记之后那段
+    t = t.split('\n').filter(l => !/^#/.test(l) && l.trim() !== '---').join('\n').trim();
+    $('#memo').value = t; cfg.memo = t; save();
+    say('读进来了，' + t.length + ' 字' + (t.length > 4000 ? '（有点长，会费钱）' : ''));
+  };
+  r.readAsText(f, 'utf-8');
+  e.target.value = '';
 };
 
 $('#clear').onclick = () => { msgs = []; save(); render(); $('#sheet').classList.remove('on'); };
