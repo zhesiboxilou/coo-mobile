@@ -36,7 +36,8 @@
   footer button.ghost{background:var(--card);border:1px solid var(--line)}
   #sheet{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:flex-end;z-index:20}
   #sheet.on{display:flex}
-  #sheet .box{background:var(--card);width:100%;border-radius:18px 18px 0 0;padding:18px 16px calc(20px + env(safe-area-inset-bottom))}
+  #sheet .box{background:var(--card);width:100%;border-radius:18px 18px 0 0;padding:18px 16px calc(20px + env(safe-area-inset-bottom));
+    max-height:92dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
   #sheet label{display:block;font-size:13px;color:var(--dim);margin:12px 0 6px}
   #sheet input,#sheet textarea{width:100%;background:var(--bg);border:1px solid var(--line);color:var(--text);
     border-radius:12px;padding:11px;font:inherit}
