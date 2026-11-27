@@ -373,12 +373,12 @@ function paintPc(){
 }
 let pcTimer = null;
 function stopPcPoll(){ if (pcTimer){ clearInterval(pcTimer); pcTimer = null; } }
-async function pcPost(text, t){
+async function pcPost(text, t, kind){
   try {
     const r = await fetch(pcBase() + '/msg', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, t: t || Date.now() })
+      body: JSON.stringify({ text, t: t || Date.now(), kind: kind || 'say' })
     });
     return r.ok;
   } catch (e){ return false; }
@@ -391,7 +391,7 @@ async function flushQueue(){
   try {
     while (cfg.pcQueue.length){
       const item = cfg.pcQueue[0];
-      const ok = await pcPost(item.text, item.t);
+      const ok = await pcPost(item.text, item.t, item.kind);
       if (!ok) break;
       cfg.pcQueue.shift();
       save();
@@ -480,12 +480,11 @@ async function send(){
   const wait = bubble('coo', '…');
   wait.dataset.pending = '1';
 
-  if (cfg.pcOn && cfg.pcAddr){
-    const ok = await pcPost(text || '（发了张图）');
-    if (ok){
-      wait.dataset.pending = '1';
-    } else {
-      cfg.pcQueue.push({ t: userMsg.t || Date.now(), text: text || '（发了张图）' });
+  // 没填 key 又连着电脑：手机只当传话筒，等我这边回
+  if (!cfg.key && cfg.pcOn && cfg.pcAddr){
+    const ok = await pcPost(text || '（发了张图）', Date.now(), 'say');
+    if (!ok){
+      cfg.pcQueue.push({ t: userMsg.t || Date.now(), text: text || '（发了张图）', kind: 'say' });
       save(); paintPc();
       wait.dataset.queued = '1';
       wait.textContent = '电脑不在，先替你存着，开机连上就补发（共 ' + cfg.pcQueue.length + ' 条）';
@@ -494,6 +493,7 @@ async function send(){
     return;
   }
 
+  let lastReply = '';
   try {
     const history = msgs.slice(-12).map(m => {
       if (m.image){
@@ -526,8 +526,19 @@ async function send(){
     wait.textContent = reply;
     msgs.push({ role: 'assistant', content: reply, t: Date.now() });
     save();
+    lastReply = reply;
   } catch (err){
     wait.textContent = '连不上：' + err.message;
+  }
+
+  // 连着电脑：把这一问一答也存档给电脑那边（聊天照旧在手机上）
+  if (lastReply && cfg.pcOn && cfg.pcAddr){
+    const line = '【手机】你：' + (text || '（图）') + '\n她说：' + lastReply;
+    const ok = await pcPost(line, Date.now(), 'log');
+    if (!ok){
+      cfg.pcQueue.push({ t: Date.now(), text: line, kind: 'log' });
+      save(); paintPc();
+    }
   }
   log.scrollTop = log.scrollHeight;
 }
