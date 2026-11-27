@@ -531,12 +531,14 @@ async function send(){
     wait.textContent = '连不上：' + err.message;
   }
 
-  // 连着电脑：把这一问一答也存档给电脑那边（聊天照旧在手机上）
-  if (lastReply && cfg.pcOn && cfg.pcAddr){
+  // 聊完把这一问一答记下来：连着电脑就立刻递过去，断了就先存着，等连上补
+  if (lastReply){
     const line = '【手机】你：' + (text || '（图）') + '\n她说：' + lastReply;
-    const ok = await pcPost(line, Date.now(), 'log');
-    if (!ok){
+    let sent = false;
+    if (cfg.pcOn && cfg.pcAddr) sent = await pcPost(line, Date.now(), 'log');
+    if (!sent){
       cfg.pcQueue.push({ t: Date.now(), text: line, kind: 'log' });
+      if (cfg.pcQueue.length > 300) cfg.pcQueue.splice(0, cfg.pcQueue.length - 300);
       save(); paintPc();
     }
   }
