@@ -83,6 +83,13 @@
     </div>
     <input type="file" id="mdFile" accept=".md,.txt,text/plain,text/markdown" hidden>
 
+    <label>连电脑：电脑那边的地址（同一个 WiFi，填 192.168.x.x:8765）</label>
+    <input id="pcAddr" placeholder="192.168.1.10:8765">
+    <div class="row">
+      <button id="pcLink">连到电脑</button>
+    </div>
+    <div id="pcState" class="sub" style="margin-top:8px;text-align:center"></div>
+
     <label>坚果云：账号（邮箱）</label>
     <input id="jUser" placeholder="you@example.com">
     <label>坚果云：应用密码（网页版「安全设置」里生成，不是登录密码）</label>
@@ -123,6 +130,9 @@ const log = $('#log');
 
 let cfg = JSON.parse(localStorage.getItem(LS.cfg) || '{}');
 cfg.model = cfg.model && cfg.model !== 'deepseek-chat' ? cfg.model : 'deepseek-flash';
+cfg.pcAddr = cfg.pcAddr || '';
+cfg.pcOn = !!cfg.pcOn;
+cfg.pcCursor = Number(cfg.pcCursor || 0);
 let msgs = JSON.parse(localStorage.getItem(LS.msgs) || '[]');
 let pendingImage = null;   // dataURL
 
@@ -169,6 +179,8 @@ function openSheet(){
   $('#jUser').value = cfg.jUser || '';
   $('#jPass').value = cfg.jPass || '';
   $('#jPath').value = cfg.jPath || 'COO/chat.json';
+  $('#pcAddr').value = cfg.pcAddr || '';
+  paintPc();
   $('#sheet').classList.add('on');
 }
 $('#gear').onclick = openSheet;
@@ -183,7 +195,8 @@ $('#save').onclick = () => {
   cfg.jUser = $('#jUser').value.trim();
   cfg.jPass = $('#jPass').value.trim();
   cfg.jPath = $('#jPath').value.trim() || 'COO/chat.json';
-  save(); paintState(); $('#sheet').classList.remove('on');
+  cfg.pcAddr = $('#pcAddr').value.trim();
+  save(); paintState(); paintPc(); $('#sheet').classList.remove('on');
 };
 
 /* ---- 同步：GitHub 私有 gist ---- */
@@ -344,7 +357,58 @@ $('#mdFile').onchange = e => {
 
 $('#clear').onclick = () => { msgs = []; save(); render(); $('#sheet').classList.remove('on'); };
 
+/* ---- 连电脑：同一个 WiFi 直连电脑上的小服务 ---- */
+function pcBase(){
+  const a = (cfg.pcAddr || '').trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  return a ? 'http://' + a : '';
+}
+function paintPc(){
+  const el = $('#pcState'); if (!el) return;
+  el.textContent = !cfg.pcAddr ? '还没填地址'
+    : (cfg.pcOn ? '已连：' + cfg.pcAddr : '地址有了，还没连');
+  const b = $('#pcLink'); if (b) b.textContent = cfg.pcOn ? '断开电脑' : '连到电脑';
+  paintState();
+}
+let pcTimer = null;
+function stopPcPoll(){ if (pcTimer){ clearInterval(pcTimer); pcTimer = null; } }
+function startPcPoll(){
+  stopPcPoll();
+  pcTimer = setInterval(async () => {
+    try {
+      const r = await fetch(pcBase() + '/replies?since=' + cfg.pcCursor);
+      if (!r.ok) return;
+      const j = await r.json();
+      const lines = j.lines || [];
+      if (lines.length){
+        const pend = log.querySelector('.msg.coo[data-pending="1"]');
+        if (pend) pend.remove();
+        lines.forEach(l => {
+          msgs.push({ role: 'assistant', content: l.text, t: l.t || Date.now() });
+          bubble('coo', l.text);
+        });
+        save();
+      }
+      cfg.pcCursor = j.cursor || cfg.pcCursor;
+      save();
+    } catch(e){}
+  }, 2000);
+}
+$('#pcLink').onclick = async () => {
+  cfg.pcAddr = $('#pcAddr').value.trim();
+  save();
+  if (cfg.pcOn){ cfg.pcOn = false; save(); stopPcPoll(); paintPc(); return; }
+  if (!cfg.pcAddr){ $('#pcState').textContent = '先填电脑地址'; return; }
+  $('#pcState').textContent = '敲电脑的门…';
+  let ok = false;
+  try { const r = await fetch(pcBase() + '/status'); ok = r.ok; } catch(e){ ok = false; }
+  if (!ok){ $('#pcState').textContent = '连不上：电脑上桥开着吗？是不是同一个 WiFi？'; return; }
+  const r2 = await fetch(pcBase() + '/replies?since=999999');
+  if (r2.ok){ const j = await r2.json(); cfg.pcCursor = j.cursor || 0; }
+  cfg.pcOn = true; save(); paintPc(); startPcPoll();
+};
+
 function paintState(){
+  if (cfg.pcOn && cfg.pcAddr){ $('#state').textContent = '连着电脑 · ' + cfg.pcAddr; return; }
   $('#state').textContent = cfg.key ? ('在的 · ' + (cfg.model || 'deepseek-flash')) : '还没填 key';
 }
 
@@ -370,7 +434,7 @@ ta.addEventListener('input', () => {
 async function send(){
   const text = ta.value.trim();
   if (!text && !pendingImage) return;
-  if (!cfg.key){ openSheet(); return; }
+  if (!cfg.key && !(cfg.pcOn && cfg.pcAddr)){ openSheet(); return; }
 
   const img = pendingImage;
   pendingImage = null;
@@ -383,6 +447,23 @@ async function send(){
   render();
 
   const wait = bubble('coo', '…');
+  wait.dataset.pending = '1';
+
+  if (cfg.pcOn && cfg.pcAddr){
+    try {
+      const r = await fetch(pcBase() + '/msg', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text || '（发了张图）' })
+      });
+      if (!r.ok) wait.textContent = '电脑那边没接：' + r.status;
+    } catch (e){
+      wait.textContent = '送不到电脑：' + e.message;
+    }
+    log.scrollTop = log.scrollHeight;
+    return;
+  }
+
   try {
     const history = msgs.slice(-12).map(m => {
       if (m.image){
@@ -427,6 +508,8 @@ ta.addEventListener('keydown', e => {
 
 render();
 paintState();
+paintPc();
+if (cfg.pcOn && cfg.pcAddr) startPcPoll();
 </script>
 </body>
 </html>
