@@ -373,12 +373,12 @@ function paintPc(){
 }
 let pcTimer = null;
 function stopPcPoll(){ if (pcTimer){ clearInterval(pcTimer); pcTimer = null; } }
-async function pcPost(text){
+async function pcPost(text, t){
   try {
     const r = await fetch(pcBase() + '/msg', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text })
+      body: JSON.stringify({ text, t: t || Date.now() })
     });
     return r.ok;
   } catch (e){ return false; }
@@ -391,7 +391,7 @@ async function flushQueue(){
   try {
     while (cfg.pcQueue.length){
       const item = cfg.pcQueue[0];
-      const ok = await pcPost(item.text);
+      const ok = await pcPost(item.text, item.t);
       if (!ok) break;
       cfg.pcQueue.shift();
       save();
