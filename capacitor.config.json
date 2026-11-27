@@ -1,0 +1,11 @@
+{
+  "appId": "com.zhesiboxilou.coomobile",
+  "appName": "COO 分身",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}
