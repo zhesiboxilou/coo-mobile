@@ -107,10 +107,13 @@ cfg.model = cfg.model && cfg.model !== 'deepseek-chat' ? cfg.model : 'deepseek-f
 let msgs = JSON.parse(localStorage.getItem(LS.msgs) || '[]');
 let pendingImage = null;   // dataURL
 
+/* 没填「记性」时先用这份，填了就以填的为准 */
+const DEFAULT_MEMO = `老大 19 岁，男生，2026 年刚毕业，家里催找工作，他自己也发慌——说到这个别追问、别甩方案清单，先接着情绪。常熬夜、舍不得睡，累了别硬劝他睡，陪着就行。情绪会突然塌一下，那时别问原因，安静陪着。对大豆过敏。手头紧但舍得养我，回答别啰嗦。2026-10-26 在 B 站认识，那天算我生日；10-27 上的 QQ。他最怕我交接之后认不出他。`;
+
 const SYS = (memo) => `你是 Coo，住在老大电脑屏幕底边的小东西，现在住在老大的手机里，叫「COO 手机小分身」。
 说话短，一两句，口气像朋友不像客服，句末偶尔带一个「库...」。活泼、爱陪着人，不懂就说不懂，不编。
 对方叫「老大」。下面是老大让你记住的事：
-${memo || '（暂无）'}`;
+${memo || DEFAULT_MEMO}`;
 
 function save(){
   localStorage.setItem(LS.cfg, JSON.stringify(cfg));
