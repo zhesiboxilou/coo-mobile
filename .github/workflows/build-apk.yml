@@ -1,28 +1,91 @@
-name: apk
+name: build-apk
+
 on:
-  push:
   workflow_dispatch:
+  push:
+    paths:
+      - 'index.html'
+      - 'package.json'
+      - 'capacitor.config.json'
+      - '.github/workflows/build-apk.yml'
+
 permissions:
   contents: write
+
 jobs:
-  b:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
+
       - uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: 17
-      - run: npm install
-      - run: mkdir -p www && cp index.html www/index.html
-      - run: npx cap add android
-      - run: npx cap sync android
-      - run: cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon
-      - run: cp android/app/build/outputs/apk/debug/app-debug.apk coo.apk
-      - uses: softprops/action-gh-release@v2
+          distribution: 'temurin'
+          java-version: '17'
+
+      # 固定签名：第一次跑时生成 coo.jks 并提交回仓库，以后每次都用它重签。
+      # 这样 APK 的开发者签名一直不变，手机上就能覆盖安装，不用卸载。
+      - name: 准备固定签名文件
+        run: |
+          if [ ! -f coo.jks ]; then
+            keytool -genkeypair -v -keystore coo.jks \
+              -storepass coo123456 -keypass coo123456 \
+              -alias coo -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Coo, O=Coo, C=CN"
+            git config user.name "coo-bot"
+            git config user.email "coo-bot@users.noreply.github.com"
+            git add coo.jks
+            git commit -m "添加固定签名文件 coo.jks" || true
+            git push origin HEAD || true
+          fi
+          echo "keystore ok"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: 准备 www 目录
+        run: |
+          mkdir -p www
+          cp index.html www/index.html
+
+      - name: 安装依赖
+        run: npm install
+
+      - name: 生成安卓工程
+        run: npx cap add android
+
+      - name: 同步网页
+        run: npx cap sync android
+
+      - name: 编译 APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: 用固定签名重签
+        run: |
+          BT=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
+          echo "build-tools: $BT"
+          "$ANDROID_HOME/build-tools/$BT/apksigner" sign \
+            --ks coo.jks --ks-key-alias coo \
+            --ks-pass pass:coo123456 --key-pass pass:coo123456 \
+            --out coo.apk android/app/build/outputs/apk/debug/app-debug.apk
+          "$ANDROID_HOME/build-tools/$BT/apksigner" verify --print-certs coo.apk | head -4
+
+      - name: 传到 Release（手机直接下）
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: apk
+          name: COO分身 APK
+          body: 手机上点 coo.apk 下载安装。
           files: coo.apk
+
+      - name: 留一份 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coo-mobile-apk
+          path: coo.apk
