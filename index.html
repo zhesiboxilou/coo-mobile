@@ -79,6 +79,20 @@
     <label>小分身的记性（可粘贴要点，几条就行）</label>
     <textarea id="memo" placeholder="例：老大 19 岁，怕我忘了他；叫我「老大」…"></textarea>
 
+    <label>坚果云：账号（邮箱）</label>
+    <input id="jUser" placeholder="you@example.com">
+    <label>坚果云：应用密码（网页版「安全设置」里生成，不是登录密码）</label>
+    <input id="jPass" type="password" placeholder="应用密码">
+    <label>坚果云：上传到哪儿</label>
+    <input id="jPath" placeholder="COO/chat.json">
+    <div class="row">
+      <button id="jUp">上传到坚果云</button>
+      <button id="jDown">从坚果云取</button>
+    </div>
+    <div class="row">
+      <button id="jShare">导出 TXT 发出去</button>
+    </div>
+
     <label>同步用：GitHub 令牌（只勾 gist 权限）</label>
     <input id="gtok" type="password" placeholder="ghp_...">
     <label>gist 编号（第一次留空，推上去会自动生成并填回来）</label>
@@ -148,6 +162,9 @@ function openSheet(){
   $('#memo').value = cfg.memo || '';
   $('#gtok').value = cfg.gtok || '';
   $('#gid').value = cfg.gid || '';
+  $('#jUser').value = cfg.jUser || '';
+  $('#jPass').value = cfg.jPass || '';
+  $('#jPath').value = cfg.jPath || 'COO/chat.json';
   $('#sheet').classList.add('on');
 }
 $('#gear').onclick = openSheet;
@@ -159,6 +176,9 @@ $('#save').onclick = () => {
   cfg.memo = $('#memo').value;
   cfg.gtok = $('#gtok').value.trim();
   cfg.gid = $('#gid').value.trim();
+  cfg.jUser = $('#jUser').value.trim();
+  cfg.jPass = $('#jPass').value.trim();
+  cfg.jPath = $('#jPath').value.trim() || 'COO/chat.json';
   save(); paintState(); $('#sheet').classList.remove('on');
 };
 
@@ -221,6 +241,87 @@ $('#pull').onclick = async () => {
     say('补进 ' + added + ' 条（云端 ' + (data.savedAt || '').slice(0, 16).replace('T', ' ') + '）');
   } catch (e){ say('连不上或跨域：' + e.message); }
 };
+/* ---- 同步：坚果云 WebDAV ---- */
+const DAV = 'https://dav.jianguoyun.com/dav/';
+function davAuth(){
+  try { return 'Basic ' + btoa(unescape(encodeURIComponent((cfg.jUser || '') + ':' + (cfg.jPass || '')))); }
+  catch(e){ return null; }
+}
+function davBody(){
+  return JSON.stringify({ savedAt: new Date().toISOString(), memo: cfg.memo || '', msgs });
+}
+function davSegs(){
+  return (cfg.jPath || 'COO/chat.json').replace(/^\/+/, '').split('/').filter(Boolean);
+}
+async function davEnsureDir(){
+  const segs = davSegs(); segs.pop();
+  let cur = DAV;
+  for (const s of segs){
+    cur += encodeURIComponent(s) + '/';
+    try { await fetch(cur, { method: 'MKCOL', headers: { 'Authorization': davAuth() } }); } catch(e){}
+  }
+}
+
+$('#jUp').onclick = async () => {
+  syncCfg();
+  if (!cfg.jUser || !cfg.jPass){ say('先填坚果云账号和应用密码'); return; }
+  say('正在上传…');
+  try {
+    await davEnsureDir();
+    const segs = davSegs();
+    const url = DAV + segs.map(encodeURIComponent).join('/');
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Authorization': davAuth(), 'Content-Type': 'application/json; charset=utf-8' },
+      body: davBody()
+    });
+    if (!res.ok){ say('上传失败 ' + res.status + (res.status === 401 ? '（账号或应用密码不对）' : '')); return; }
+    say('已上传 ' + msgs.length + ' 条 · ' + new Date().toTimeString().slice(0, 5));
+  } catch (e){ say('连不上：' + e.message); }
+};
+
+$('#jDown').onclick = async () => {
+  syncCfg();
+  if (!cfg.jUser || !cfg.jPass){ say('先填坚果云账号和应用密码'); return; }
+  say('正在取…');
+  try {
+    const url = DAV + davSegs().map(encodeURIComponent).join('/');
+    const res = await fetch(url, { headers: { 'Authorization': davAuth() } });
+    if (!res.ok){ say('取不到 ' + res.status); return; }
+    const data = JSON.parse(await res.text());
+    const seen = new Set(msgs.map(m => m.role + '|' + m.content));
+    let added = 0;
+    (data.msgs || []).forEach(m => {
+      const k = m.role + '|' + m.content;
+      if (!seen.has(k)){ msgs.push(m); seen.add(k); added++; }
+    });
+    msgs.sort((a, b) => (a.t || 0) - (b.t || 0));
+    if (data.memo){ cfg.memo = data.memo; $('#memo').value = data.memo; }
+    save(); render();
+    say('补进 ' + added + ' 条（云端 ' + (data.savedAt || '').slice(0, 16).replace('T', ' ') + '）');
+  } catch (e){ say('连不上或格式不对：' + e.message); }
+};
+
+$('#jShare').onclick = async () => {
+  syncCfg();
+  const lines = msgs.map(m => (m.role === 'user' ? '老大：' : '我：') + (m.content || ''));
+  const text = 'COO 手机记录 ' + new Date().toLocaleString('zh-CN') + '\r\n\r\n' + lines.join('\r\n');
+  const name = 'coo-' + new Date().toISOString().slice(0, 10) + '-' + new Date().toTimeString().slice(0, 5).replace(':', '') + '.md';
+  const P = (window.Capacitor && window.Capacitor.Plugins) || {};
+  if (P.Filesystem && P.Share){
+    try {
+      const b64 = btoa(unescape(encodeURIComponent('\ufeff' + text)));
+      await P.Filesystem.writeFile({ path: name, data: b64, directory: 'CACHE', encoding: 'base64' });
+      const u = await P.Filesystem.getUri({ path: name, directory: 'CACHE' });
+      await P.Share.share({ title: 'COO 聊天记录', dialogTitle: '发到哪儿', files: [u.uri] });
+      say('已生成 ' + name + '，选 QQ 发到「我的电脑」就行');
+      return;
+    } catch (e){ say('导出失败：' + e.message); return; }
+  }
+  try { await navigator.clipboard.writeText(text); say('已复制成文字，粘到 QQ 发我就行'); }
+  catch (e){ say('复制失败：' + e.message); }
+};
+
 $('#clear').onclick = () => { msgs = []; save(); render(); $('#sheet').classList.remove('on'); };
 
 function paintState(){
