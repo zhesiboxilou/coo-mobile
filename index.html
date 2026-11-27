@@ -133,6 +133,7 @@ cfg.model = cfg.model && cfg.model !== 'deepseek-chat' ? cfg.model : 'deepseek-f
 cfg.pcAddr = cfg.pcAddr || '';
 cfg.pcOn = !!cfg.pcOn;
 cfg.pcCursor = Number(cfg.pcCursor || 0);
+cfg.pcQueue = Array.isArray(cfg.pcQueue) ? cfg.pcQueue : [];   // 电脑不在时先攒着，连上补发
 let msgs = JSON.parse(localStorage.getItem(LS.msgs) || '[]');
 let pendingImage = null;   // dataURL
 
@@ -364,19 +365,49 @@ function pcBase(){
 }
 function paintPc(){
   const el = $('#pcState'); if (!el) return;
+  const q = (cfg.pcQueue && cfg.pcQueue.length) ? ('（待补 ' + cfg.pcQueue.length + ' 条）') : '';
   el.textContent = !cfg.pcAddr ? '还没填地址'
-    : (cfg.pcOn ? '已连：' + cfg.pcAddr : '地址有了，还没连');
+    : (cfg.pcOn ? '已连：' + cfg.pcAddr + q : '地址有了，还没连' + q);
   const b = $('#pcLink'); if (b) b.textContent = cfg.pcOn ? '断开电脑' : '连到电脑';
   paintState();
 }
 let pcTimer = null;
 function stopPcPoll(){ if (pcTimer){ clearInterval(pcTimer); pcTimer = null; } }
+async function pcPost(text){
+  try {
+    const r = await fetch(pcBase() + '/msg', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+    return r.ok;
+  } catch (e){ return false; }
+}
+let pcFlushing = false;
+async function flushQueue(){
+  if (pcFlushing) return;
+  if (!cfg.pcQueue || !cfg.pcQueue.length) return;
+  pcFlushing = true;
+  try {
+    while (cfg.pcQueue.length){
+      const item = cfg.pcQueue[0];
+      const ok = await pcPost(item.text);
+      if (!ok) break;
+      cfg.pcQueue.shift();
+      save();
+      const el = log.querySelector('.msg.coo[data-queued]');
+      if (el) el.remove();
+    }
+    save(); paintPc();
+  } finally { pcFlushing = false; }
+}
 function startPcPoll(){
   stopPcPoll();
   pcTimer = setInterval(async () => {
     try {
       const r = await fetch(pcBase() + '/replies?since=' + cfg.pcCursor);
       if (!r.ok) return;
+      flushQueue();
       const j = await r.json();
       const lines = j.lines || [];
       if (lines.length){
@@ -404,7 +435,7 @@ $('#pcLink').onclick = async () => {
   if (!ok){ $('#pcState').textContent = '连不上：电脑上桥开着吗？是不是同一个 WiFi？'; return; }
   const r2 = await fetch(pcBase() + '/replies?since=999999');
   if (r2.ok){ const j = await r2.json(); cfg.pcCursor = j.cursor || 0; }
-  cfg.pcOn = true; save(); paintPc(); startPcPoll();
+  cfg.pcOn = true; save(); paintPc(); startPcPoll(); flushQueue();
 };
 
 function paintState(){
@@ -450,15 +481,14 @@ async function send(){
   wait.dataset.pending = '1';
 
   if (cfg.pcOn && cfg.pcAddr){
-    try {
-      const r = await fetch(pcBase() + '/msg', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text || '（发了张图）' })
-      });
-      if (!r.ok) wait.textContent = '电脑那边没接：' + r.status;
-    } catch (e){
-      wait.textContent = '送不到电脑：' + e.message;
+    const ok = await pcPost(text || '（发了张图）');
+    if (ok){
+      wait.dataset.pending = '1';
+    } else {
+      cfg.pcQueue.push({ t: userMsg.t || Date.now(), text: text || '（发了张图）' });
+      save(); paintPc();
+      wait.dataset.queued = '1';
+      wait.textContent = '电脑不在，先替你存着，开机连上就补发（共 ' + cfg.pcQueue.length + ' 条）';
     }
     log.scrollTop = log.scrollHeight;
     return;
